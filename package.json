@@ -1,0 +1,12 @@
+{
+  "name": "secure-heap-proof-of-concept",
+  "version": "1.0.0",
+  "main": "example.js",
+  "scripts": {
+    "start": "node example.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Michael Jay",
+  "license": "ISC",
+  "description": ""
+}
