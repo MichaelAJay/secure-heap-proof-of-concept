@@ -10,7 +10,7 @@ class SecureHeapProcessManager {
         this.msgId = 0;
         
         this.child = fork('./secure-worker.js', [], {
-            execArgv: [`--secure-heap=${n}`]
+            execArgv: [`--secure-heap=${n} --expose-gc`]
         });
         this.pending = new Map();
 
@@ -39,6 +39,9 @@ class SecureHeapProcessManager {
                 console.error('Unexpected message from child', msg.type);
             }
         });
+
+        // Register shutdown handlers for the main process
+        this.#registerShutdownHandlers();
     }
 
     /**
@@ -60,8 +63,48 @@ class SecureHeapProcessManager {
 
     stop() {
         console.log('SecureHeapProcessManager stopping');
-        this.child.kill();
+        
+        // ✅ SECURITY: Send graceful shutdown signal to child process
+        if (this.child && !this.child.killed) {
+            console.log('SecureHeapProcessManager: Sending SIGTERM to child process...');
+            this.child.kill('SIGTERM');
+            
+            // Give child process time to shutdown gracefully
+            setTimeout(() => {
+                if (this.child && !this.child.killed) {
+                    console.log('SecureHeapProcessManager: Child process did not exit gracefully, forcing kill...');
+                    this.child.kill('SIGKILL');
+                }
+            }, 5000); // 5 second timeout for graceful shutdown
+        }
+        
+        // Clear any pending requests
+        for (const [id, pending] of this.pending) {
+            pending.reject(new Error('SecureHeapProcessManager is shutting down'));
+        }
+        this.pending.clear();
+        
         console.log('SecureHeapProcessManager child killed');
+    }
+
+    /**
+     * Registers shutdown handlers for the main process
+     */
+    #registerShutdownHandlers() {
+        const shutdownHandler = (signal) => {
+            console.log(`SecureHeapProcessManager: Received ${signal}, shutting down...`);
+            this.stop();
+            process.exit(0);
+        };
+
+        process.once('SIGINT', shutdownHandler);
+        process.once('SIGTERM', shutdownHandler);
+        process.once('SIGHUP', shutdownHandler);
+        
+        process.once('beforeExit', () => {
+            console.log('SecureHeapProcessManager: Process exiting, stopping child...');
+            this.stop();
+        });
     }
 }
 

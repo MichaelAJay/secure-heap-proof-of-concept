@@ -6,9 +6,31 @@ const secureHeapSecretManager = new SecureHeapSecretManager();
 
 let decryptedPasswordBuffer = null;
 
+// ✅ SECURITY: Register graceful shutdown for the worker process
+process.once('SIGTERM', () => {
+    console.log('Secure worker: Received SIGTERM, shutting down gracefully...');
+    if (secureHeapSecretManager) {
+        secureHeapSecretManager.shutdown();
+    }
+    process.exit(0);
+});
+
+process.once('SIGINT', () => {
+    console.log('Secure worker: Received SIGINT, shutting down gracefully...');
+    if (secureHeapSecretManager) {
+        secureHeapSecretManager.shutdown();
+    }
+    process.exit(0);
+});
+
 process.on('message', async (msg) => {
     const outboundMsg = { type: `${msg.type}:result`, id: msg.id };
     try {
+        // ✅ SECURITY: Check if manager is shut down
+        if (secureHeapSecretManager.isShutDown()) {
+            throw new Error('SecureHeapSecretManager has been shut down');
+        }
+        
         switch (msg.type) {
             case 'generateSecureKeypair':
                 console.log('Secure worker generateSecureKeypair');
@@ -58,6 +80,12 @@ process.on('message', async (msg) => {
         if (Buffer.isBuffer(decryptedPasswordBuffer)) {
             console.log('decryptedPasswordBuffer is buffer - secure worker random fill sync');
             crypto.randomFillSync(decryptedPasswordBuffer);
+            
+            // ✅ SECURITY: Remove from tracking after sanitization
+            if (secureHeapSecretManager && !secureHeapSecretManager.isShutDown()) {
+                secureHeapSecretManager.removeFromTracking(decryptedPasswordBuffer);
+            }
+            
             decryptedPasswordBuffer = null;
         }
         

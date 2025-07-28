@@ -11,9 +11,118 @@ class SecureHeapSecretManager {
       oaepHash: 'sha256'
     };
     this.encryptedPassword = null;
+    this.isShutdown = false;
+    this.activeBuffers = new Set(); // Track active buffers for cleanup
+    
+    // ✅ SECURITY: Register graceful shutdown handlers
+    this.#registerShutdownHandlers();
+  }
+
+  /**
+   * Registers signal handlers for graceful shutdown
+   * @private
+   */
+  #registerShutdownHandlers() {
+    const shutdownHandler = (signal) => {
+      console.log(`SecureHeapSecretManager: Received ${signal}, initiating graceful shutdown...`);
+      this.shutdown();
+      process.exit(0);
+    };
+
+    // Handle standard termination signals
+    process.once('SIGINT', shutdownHandler);   // Ctrl+C
+    process.once('SIGTERM', shutdownHandler);  // Termination request
+    process.once('SIGHUP', shutdownHandler);   // Hang up
+    
+    // Handle uncaught exceptions and rejections
+    process.once('uncaughtException', (error) => {
+      console.error('SecureHeapSecretManager: Uncaught exception, forcing shutdown:', error);
+      this.shutdown();
+      process.exit(1);
+    });
+    
+    process.once('unhandledRejection', (reason, promise) => {
+      console.error('SecureHeapSecretManager: Unhandled rejection, forcing shutdown:', reason);
+      this.shutdown();
+      process.exit(1);
+    });
+
+    // Handle normal process exit
+    process.once('beforeExit', () => {
+      console.log('SecureHeapSecretManager: Process exiting, cleaning up...');
+      this.shutdown();
+    });
+  }
+
+  /**
+   * Graceful shutdown - sanitizes all sensitive data
+   * @public
+   */
+  shutdown() {
+    if (this.isShutdown) {
+      return; // Already shut down
+    }
+    
+    console.log('SecureHeapSecretManager: Starting graceful shutdown...');
+    
+    try {
+      // ✅ SECURITY: Clear encrypted password
+      if (this.encryptedPassword && Buffer.isBuffer(this.encryptedPassword)) {
+        crypto.randomFillSync(this.encryptedPassword);
+        this.encryptedPassword = null;
+        console.log('SecureHeapSecretManager: Encrypted password sanitized');
+      }
+      
+      // ✅ SECURITY: Clear any active buffers being tracked
+      for (const buffer of this.activeBuffers) {
+        if (Buffer.isBuffer(buffer)) {
+          crypto.randomFillSync(buffer);
+        }
+      }
+      this.activeBuffers.clear();
+      console.log('SecureHeapSecretManager: Active buffers sanitized');
+      
+      // ✅ SECURITY: Clear RSA keys (they're in secure heap, but clear references)
+      this.rsaPrivateKey = null;
+      this.rsaPublicKey = null;
+      console.log('SecureHeapSecretManager: RSA key references cleared');
+      
+      // ✅ SECURITY: Force garbage collection if available
+      if (global.gc) {
+        global.gc();
+        console.log('SecureHeapSecretManager: Garbage collection triggered');
+      }
+      
+      this.isShutdown = true;
+      console.log('SecureHeapSecretManager: Graceful shutdown completed');
+      
+    } catch (error) {
+      console.error('SecureHeapSecretManager: Error during shutdown:', error);
+      // Continue shutdown even if there are errors
+      this.isShutdown = true;
+    }
+  }
+
+  /**
+   * Checks if the manager has been shut down
+   * @returns {boolean}
+   */
+  isShutDown() {
+    return this.isShutdown;
+  }
+
+  /**
+   * Throws error if manager is shut down
+   * @private
+   */
+  #checkShutdown() {
+    if (this.isShutdown) {
+      throw new Error('SECURITY ERROR: SecureHeapSecretManager has been shut down');
+    }
   }
 
   getSecureHeapUsage() {
+    this.#checkShutdown();
     return crypto.secureHeapUsed();
   }
 
@@ -22,6 +131,8 @@ class SecureHeapSecretManager {
    * @returns {Promise<void>}
    */
   async generateSecureKeypair() {
+    this.#checkShutdown();
+    
     // Ensure secure heap allocation settles before getting secure heap allocation baseline
     await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -65,6 +176,8 @@ class SecureHeapSecretManager {
      * @throws {Error} If current allocation is less than baseline
      */
   verifyExpectedAllocation() {
+    this.#checkShutdown();
+    
     const { used: currentAllocation } = crypto.secureHeapUsed();
 
     // Validate allocation measurement is a valid number
@@ -92,6 +205,8 @@ class SecureHeapSecretManager {
    * @returns {Promise<void>}
    */
   async readInPassword(promptString = 'Enter password') {
+    this.#checkShutdown();
+    
     const { BufferIO } = require('./bufferio.js');
     const bufferIO = new BufferIO();
 
@@ -100,15 +215,23 @@ class SecureHeapSecretManager {
       // Get password directly into buffer - no string creation
       passwordBuffer = await bufferIO.readIn(promptString);
 
+      // ✅ SECURITY: Track buffer for potential shutdown cleanup
+      this.activeBuffers.add(passwordBuffer);
+
       // Immediately encrypt the buffer - is automatically overwritten by setEncryptedPassword
       this.#setEncryptedPassword(passwordBuffer);
     } catch (err) {
       // BufferIO handles its own cleanup, but ensure any local buffer is cleared
       if (passwordBuffer) {
+        this.activeBuffers.delete(passwordBuffer);
         crypto.randomFillSync(passwordBuffer);
       }
       throw err;
     } finally {
+      // Remove from tracking since setEncryptedPassword sanitized it
+      if (passwordBuffer) {
+        this.activeBuffers.delete(passwordBuffer);
+      }
       if (global.gc) {
         global.gc();
       }
@@ -130,6 +253,8 @@ class SecureHeapSecretManager {
    * @throws {Error} If passwordBuffer is not a Buffer
    */
   #setEncryptedPassword(passwordBuffer) {
+    this.#checkShutdown();
+    
     // Enforce buffer-only input
     if (!Buffer.isBuffer(passwordBuffer)) {
       throw new Error('SECURITY ERROR: setEncryptedPassword requires a Buffer, not a string or other type');
@@ -159,11 +284,32 @@ class SecureHeapSecretManager {
    * @returns {Buffer} Decrypted password as a Buffer
    */
   getDecryptedPassword() {
+    this.#checkShutdown();
+    
     const decryptedPassword = crypto.privateDecrypt({
       key: this.rsaPrivateKey,
       ...this.crypto
     }, this.encryptedPassword);
+    
+    // ✅ SECURITY: Track the decrypted buffer for potential shutdown cleanup
+    // Note: This buffer will be sanitized by the caller, but we track it
+    // in case shutdown happens before the caller sanitizes it
+    this.activeBuffers.add(decryptedPassword);
+    
+    // ✅ SECURITY NOTE: This buffer will be sent via IPC which creates copies.
+    // The original buffer in this process should be sanitized, but we need
+    // to return it first. The worker process will sanitize after IPC send.
+    // The main process MUST sanitize its received copy.
+    
     return decryptedPassword;
+  }
+
+  /**
+   * Removes a buffer from active tracking (call this after manual sanitization)
+   * @param {Buffer} buffer - Buffer that has been sanitized
+   */
+  removeFromTracking(buffer) {
+    this.activeBuffers.delete(buffer);
   }
 }
 

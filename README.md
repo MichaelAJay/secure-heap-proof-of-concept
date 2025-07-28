@@ -150,6 +150,96 @@ Console output confirms both sanitization points execute:
 ✅ **Cross-Process Sanitization**: Buffers cleaned on both sides of IPC  
 ✅ **Exception Safety**: Cleanup guaranteed even with errors  
 ✅ **Immediate Cleanup**: Minimal exposure window with try/finally patterns  
+✅ **Graceful Shutdown**: All sensitive data sanitized on process termination  
+
+## Graceful Shutdown Architecture
+
+### Problem Statement
+Process termination (via signals, exceptions, or normal exit) can leave sensitive data in memory if not properly handled.
+
+### Solution
+The system implements comprehensive shutdown handling across all components to ensure sensitive data is sanitized before process termination.
+
+### Shutdown Components
+
+#### 1. **SecureHeapSecretManager Shutdown**
+Handles cleanup of all sensitive data within the secure heap process:
+
+```javascript
+shutdown() {
+    // Clear encrypted password
+    if (this.encryptedPassword && Buffer.isBuffer(this.encryptedPassword)) {
+        crypto.randomFillSync(this.encryptedPassword);
+        this.encryptedPassword = null;
+    }
+    
+    // Clear any tracked active buffers
+    for (const buffer of this.activeBuffers) {
+        if (Buffer.isBuffer(buffer)) {
+            crypto.randomFillSync(buffer);
+        }
+    }
+    this.activeBuffers.clear();
+    
+    // Clear RSA key references
+    this.rsaPrivateKey = null;
+    this.rsaPublicKey = null;
+    
+    // Force garbage collection
+    if (global.gc) {
+        global.gc();
+    }
+}
+```
+
+#### 2. **Signal Handling**
+Registers handlers for all standard termination signals:
+
+- **SIGINT** (Ctrl+C): User interruption
+- **SIGTERM**: Graceful termination request
+- **SIGHUP**: Hang up signal
+- **uncaughtException**: Unhandled errors
+- **unhandledRejection**: Unhandled promise rejections
+- **beforeExit**: Normal process exit
+
+#### 3. **Active Buffer Tracking**
+The system tracks all active password buffers to ensure cleanup even during unexpected shutdown:
+
+```javascript
+// Buffers are tracked when created
+this.activeBuffers.add(passwordBuffer);
+
+// And removed after sanitization
+this.activeBuffers.delete(passwordBuffer);
+
+// All tracked buffers are sanitized during shutdown
+for (const buffer of this.activeBuffers) {
+    crypto.randomFillSync(buffer);
+}
+```
+
+#### 4. **Cross-Process Shutdown Coordination**
+The main process sends graceful shutdown signals to the secure worker process:
+
+```javascript
+// Send SIGTERM to child process
+this.child.kill('SIGTERM');
+
+// Fallback to SIGKILL after timeout
+setTimeout(() => {
+    if (!this.child.killed) {
+        this.child.kill('SIGKILL');
+    }
+}, 5000);
+```
+
+### Shutdown Guarantees
+
+✅ **Signal Coverage**: All standard termination signals handled  
+✅ **Exception Safety**: Cleanup occurs even during errors  
+✅ **Buffer Tracking**: All active buffers sanitized on shutdown  
+✅ **Cross-Process**: Both main and worker processes shutdown gracefully  
+✅ **Timeout Protection**: Forced termination if graceful shutdown fails  
 
 ## Usage Example
 
