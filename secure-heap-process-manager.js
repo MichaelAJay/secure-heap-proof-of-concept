@@ -1,7 +1,8 @@
 const { fork } = require('node:child_process');
+const crypto = require('crypto');
 
-const n = 32768; // should be power of 2, will check w/o power of 2 soon.
-const validRequests = ['checkSecureHeapUsage', 'decryptPassword'];
+const n = 32768;
+const validRequests = ['generateSecureKeypair', 'checkSecureHeapEnabled', 'readInPassword', 'getDecryptedPassword', 'verifyExpectedAllocation'];
 const validChildMessageTypes = validRequests.map(request => `${request}:result`);
 
 class SecureHeapProcessManager {
@@ -43,8 +44,9 @@ class SecureHeapProcessManager {
     /**
      * 
      * @param {string} type 
+     * @param {Object} params - Additional parameters for the request
      */
-    handleRequest(type) {
+    handleRequest(type, params = {}) {
         if (!validRequests.includes(type)) {
             return Promise.reject(new Error(`Invalid request type: ${type}`));
         }
@@ -52,7 +54,7 @@ class SecureHeapProcessManager {
         return new Promise((resolve, reject) => {
             const id = ++this.msgId;
             this.pending.set(id, { resolve, reject });
-            this.child.send({ type, id });
+            this.child.send({ type, id, ...params });
         })
     }
 
