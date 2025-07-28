@@ -3,10 +3,11 @@
   "version": "1.0.0",
   "main": "example.js",
   "scripts": {
-    "start": "node example.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node --expose-gc example.js",
+    "test": "./test-security-behavior.sh",
+    "test:security": "./test-security-behavior.sh"
   },
   "author": "Michael Jay",
   "license": "ISC",
-  "description": ""
+  "description": "Secure heap password management proof of concept with comprehensive security testing"
 }
