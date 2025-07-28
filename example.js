@@ -27,6 +27,9 @@ const LOOP_WAIT_MS = 15000;
         try {
             loopCount++;
             console.log(`\n--- Loop iteration ${loopCount} ---`);
+
+            const externalSecureHeapUsage = crypto.secureHeapUsed();
+            console.log("Secure heap usage should be 0 outside of the secure process - is it?", externalSecureHeapUsage.total === 0);
             
             // Get the decrypted password
             const decryptedPassword = await manager.handleRequest('getDecryptedPassword');
@@ -63,7 +66,4 @@ const LOOP_WAIT_MS = 15000;
             await new Promise(resolve => setTimeout(resolve, LOOP_WAIT_MS));
         }
     }
-    
-    // This code will never be reached due to infinite loop
-    // manager.stop();
 })()
