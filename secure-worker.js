@@ -60,7 +60,6 @@ process.on('message', async (msg) => {
 
                 // ✅ OPTIMIZATION: Minimize exposure window by immediate assignment and send
                 decryptedPasswordBuffer = secureHeapSecretManager.getDecryptedPassword();
-                console.log('decryptedPasword is buffer', Buffer.isBuffer(decryptedPasswordBuffer));
                 
                 // ✅ SECURITY: Store reference for post-IPC cleanup
                 // The buffer will be sanitized in the callback after IPC send
@@ -78,7 +77,6 @@ process.on('message', async (msg) => {
     process.send(outboundMsg, (error) => {
         console.log('Callback');
         if (Buffer.isBuffer(decryptedPasswordBuffer)) {
-            console.log('decryptedPasswordBuffer is buffer - secure worker random fill sync');
             crypto.randomFillSync(decryptedPasswordBuffer);
             
             // ✅ SECURITY: Remove from tracking after sanitization

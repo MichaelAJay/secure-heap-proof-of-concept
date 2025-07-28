@@ -34,7 +34,7 @@ process.once('SIGTERM', gracefulShutdown);
     await manager.handleRequest('readInPassword');
     console.log('Password read and encrypted');
 
-    console.log('\n=== Starting Infinite Loop for getDecryptedPassword ===');
+    console.log('\n=== Starting Infinite Loop with Guaranteed Cleanup ===');
     console.log(`Loop interval: ${LOOP_WAIT_MS}ms`);
     
     let loopCount = 0;
@@ -48,31 +48,39 @@ process.once('SIGTERM', gracefulShutdown);
             const allocationResult = await manager.handleRequest('verifyExpectedAllocation');
             console.log('Allocation verification result:', allocationResult);
             
-            // Get the decrypted password
-            const decryptedPassword = await manager.handleRequest('getDecryptedPassword');
+            // ✅ NEW: Use withDecryptedPassword for guaranteed cleanup
+            await manager.withDecryptedPassword((passwordBuffer) => {
+                console.log('✅ Password accessed with guaranteed cleanup');
+                
+                // ✅ CRITICAL: Use the password for your operations here
+                // For example, unlocking a wallet:
+                // const wallet = new Wallet(walletData);
+                // wallet.unlock(passwordBuffer);
+                
+                // ✅ SECURITY DEMONSTRATION: toString() is now blocked!
+                try {
+                    const passwordString = passwordBuffer.toString();
+                    console.log('This should never be reached!');
+                } catch (error) {
+                    console.log('✅ SECURITY: toString() blocked -', error.message);
+                }
+                
+                // ✅ SECURITY DEMONSTRATION: Console logging of buffer is sanitized
+                console.log('Buffer in console:', passwordBuffer);
+                
+                // ✅ SECURITY DEMONSTRATION: JSON conversion is also blocked
+                try {
+                    JSON.stringify(passwordBuffer);
+                    console.log('This should never be reached!');
+                } catch (error) {
+                    console.log('✅ SECURITY: JSON conversion blocked -', error.message);
+                }
+                
+                console.log('✅ Password operations completed');
+                // NO MANUAL CLEANUP NEEDED - it's guaranteed by the framework!
+            });
             
-            // ✅ OPTIMIZATION: Use try/finally to guarantee immediate sanitization
-            try {
-                console.log('Decrypted password is buffer:', Buffer.isBuffer(decryptedPassword));
-                // ❌ REMOVED: console.log('Decrypted password content:', decryptedPassword.toString());
-                // ✅ SECURITY: Never convert buffer to string - keeps password mutable for sanitization
-                console.log('Decrypted password length:', decryptedPassword ? decryptedPassword.length : 0);
-                
-                // ✅ CRITICAL: Any actual password usage would go here
-                // Exposure window is now minimized to this specific block
-                
-            } finally {
-                // ✅ GUARANTEED: Buffer sanitized immediately after use, even if exceptions occur
-                if (Buffer.isBuffer(decryptedPassword)) {
-                    crypto.randomFillSync(decryptedPassword);
-                    console.log('Application: Password buffer sanitized in finally block');
-                }
-                
-                // ✅ OPTIMIZATION: Force immediate garbage collection to clear any copies
-                if (global.gc) {
-                    global.gc();
-                }
-            }
+            console.log('✅ Callback completed - password automatically sanitized');
             
             // Wait before next iteration
             await new Promise(resolve => setTimeout(resolve, LOOP_WAIT_MS));
